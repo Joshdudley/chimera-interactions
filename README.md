@@ -8,13 +8,15 @@ These scripts run **inside UCSF ChimeraX**. They are visualization and screening
 
 | Script | ChimeraX command | Detection rule |
 | --- | --- | --- |
-| [`add_hydrophobic.py`](add_hydrophobic.py) | `add_hydrophobic` | Closest non-carbonyl carbon pair between selected hydrophobic residues, within 4.5 Å; one contact per residue pair. |
+| [`add_hydrophobic.py`](add_hydrophobic.py) | `add_hydrophobic` | Closest non-carbonyl carbon pair within 4.5 Å, with both residues drawn from ALA, VAL, LEU, ILE, MET, PRO, PHE, TRP, or TYR; one contact per residue pair. |
 | [`add_hbond.py`](add_hbond.py) | `add_hbond` | Donor–acceptor heavy-atom distance at most 3.5 Å; closest contact per residue pair. Uses an attached hydrogen for the displayed endpoint when available. |
 | [`add_salt_bridge.py`](add_salt_bridge.py) | `add_salt_bridge` | ASP/GLU side-chain oxygens near LYS/ARG side-chain nitrogens, within 4.0 Å; closest contact per residue pair. |
 | [`add_polar.py`](add_polar.py) | `add_polar` | Closest eligible O/N/S contact within 4.0 Å. Includes standard amino-acid backbone N/O and selected side chains; excludes residue pairs qualifying as hydrogen bonds and conventional salt-bridge atom pairs. |
 | [`add_pi.py`](add_pi.py) | `add_pi` | Aromatic ring–ring, cation–π, and sulfur–π candidates. Uses a 6.5 Å ring-centroid cutoff or a 5.5 Å nearest-ring-atom criterion for ring–ring contacts, and a 5.5 Å cutoff for aromatic partners. |
 | [`add_bad_hydrophobic.py`](add_bad_hydrophobic.py) | `add_bad_hydrophobic` | Non-carbonyl carbon of a hydrophobic residue near an O/N atom across the interface, within 3.5 Å; closest contact per residue pair. A proximity flag, not proof that the contact is energetically unfavorable. |
 | [`show_interactions.py`](show_interactions.py) | `show_interactions`, `hide_interactions` | Displays existing interaction lines and contacting sidechains; can filter chain pairs, retain extra residues, control distance labels and hide other chains. |
+| [`export_interactions.py`](export_interactions.py) | `export_interactions` | Exports the existing interaction groups to CSV, including groups with zero contacts. |
+| [`compare_interactions.py`](compare_interactions.py) | Terminal command | Compares the ChimeraX CSV with PDBe Arpeggio JSON by chain and residue pair. |
 
 The categories are based on the scripts' specific atom lists and distance rules. The carbon filters above include backbone `CA` because they exclude only the carbonyl carbon `C`. Hydrogen bonds use a heavy-atom distance proxy rather than an angle criterion. The π detector does not require ring-plane orientation. Polar contacts are suppressed for a residue pair when it meets the hydrogen-bond rules, preventing a second polar line over that pair's hydrogen-bond line.
 
@@ -75,6 +77,32 @@ hide_interactions #2
 ```
 
 `keep` adds listed residues to the display even if they have no selected contacts. `display_Dist true|false` controls distance labels; omitting it preserves the current visibility of labels in selected groups. For filtered calls, `hide_other_chains true` is the default and hides cartoons and atoms of other chains. Set it to `false` to leave other chains' current display alone. `hide_interactions #2` hides the existing interaction lines and protein atoms; it does not delete interactions.
+
+## Compare with PDBe Arpeggio
+
+The `printFile yes` summaries from the six detection commands contain totals per chain. To compare individual residue pairs, export the existing pseudobonds from the ChimeraX session:
+
+```chimerax
+runscript /path/to/chimera-interactions/export_interactions.py
+export_interactions #2 2_interactions.csv
+save structure.cif models #2
+```
+
+`export_interactions` includes hidden contacts and an explicit row for each chain-pair group with zero contacts. It does not rerun the detectors. If the structure is already available as mmCIF, use the same underlying structure for Arpeggio. The current PDBe Arpeggio implementation accepts mmCIF input and produces JSON; run it separately, for example:
+
+```bash
+pdbe-arpeggio structure.cif -o arpeggio_output/
+```
+
+Then compare the exported CSV with Arpeggio's interaction JSON using ordinary Python (outside ChimeraX):
+
+```bash
+python3 compare_interactions.py 2_interactions.csv path/to/arpeggio.json --output interaction_comparison.csv
+```
+
+This writes `interaction_comparison.csv` and `interaction_comparison_summary.txt`. The statuses `both`, `chimera_only`, and `arpeggio_only` refer to a chain pair, residue pair, and interaction category; multiple Arpeggio atom contacts for the same pair count once. A difference is a candidate to inspect, since the programs use different chemical rules and geometry. `bad_hydrophobic` has no direct Arpeggio category and is excluded from the category comparison. The export warns when a saved π centroid cannot be mapped unambiguously to a protein residue; the reported contact total should be checked before interpreting a comparison. Chain IDs, residue numbers, and insertion codes must match between the ChimeraX export and the mmCIF used by Arpeggio.
+
+**Hydrophobic comparison:** Arpeggio may label contacts involving residues outside the nine-residue list used by `add_hydrophobic`, including carbon contacts from LYS, GLU, ARG, HIS, THR, and GLN. Our detector requires *both* residues to be on its list. Consequently, Arpeggio-only hydrophobic residue pairs can reflect this deliberate selection rule rather than missed contacts within the script's defined scope. The comparator already counts each residue pair only once, regardless of the number of atom contacts Arpeggio reports.
 
 ## Output and interpretation
 

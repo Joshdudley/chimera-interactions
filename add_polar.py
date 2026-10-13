@@ -104,6 +104,41 @@ def _is_hbond_like_pair(a1, a2):
     )
 
 
+def _existing_hbond_pairs(session, source, chain1, target_chains):
+    """Residue pairs already drawn by add_hbond for this source/interface.
+
+    The H-bond pseudobond may end on an explicit hydrogen. Its residue is
+    still the donor residue, so atom endpoint names need no special handling.
+    """
+    source_id = '_'.join(map(str, source.id))
+    pairs = set()
+    for group in _suite_all_models(session):
+        if not hasattr(group, 'pseudobonds') or hasattr(group, 'atoms'):
+            continue
+        name = str(getattr(group, 'name', ''))
+        for target in target_chains:
+            expected = f'Model_{source_id}_hbond_Chain_{chain1}_to_Chain_{target}'
+            tagged = (getattr(group, '_interaction_suite_source_id', None) == source_id
+                      and getattr(group, '_interaction_suite_kind', None) == 'hbond'
+                      and getattr(group, '_interaction_suite_chain1', None) == chain1
+                      and getattr(group, '_interaction_suite_chain2', None) == target)
+            if name != expected and not tagged:
+                continue
+            for pb in group.pseudobonds:
+                try:
+                    a, b = pb.atoms
+                    ra, rb = a.residue, b.residue
+                    if (ra.structure is source and rb.structure is source
+                            and ra.chain_id == chain1 and rb.chain_id == target):
+                        pairs.add((ra, rb))
+                    elif (ra.structure is source and rb.structure is source
+                          and rb.chain_id == chain1 and ra.chain_id == target):
+                        pairs.add((rb, ra))
+                except (AttributeError, TypeError, ValueError):
+                    continue
+    return pairs
+
+
 def _native_add_polar(session, model_input, chain1_id, chain2_id,
                             print_file_keyword, print_file_value, interaction_model_id, showLabels="yes"):
     struct_model = _find_structure(session, model_input)
@@ -153,6 +188,20 @@ def _native_add_polar(session, model_input, chain1_id, chain2_id,
                 and getattr(m, "name", "") == final_group_name):
             session.logger.error(f"[add_polar] Error: interaction group '{final_group_name}' already exists.")
             return
+
+    # `close` can detach a global pseudobond group from the model tree while
+    # leaving its name and bonds in ChimeraX's pseudobond manager. A later
+    # `pbond ... name <same name> global` then appends to those old bonds.
+    # Clear only this chain-pair's detached group before regenerating it.
+    from chimerax.atomic import PseudobondManager
+    previous = PseudobondManager(session).get_group(final_group_name, create=False)
+    if previous is not None and len(previous.pseudobonds):
+        previous_count = len(previous.pseudobonds)
+        previous.pseudobonds.delete()
+        session.logger.info(
+            f'[add_polar] Cleared {previous_count} retained polar pseudobond(s) '
+            f'from {final_group_name} before rebuilding.'
+        )
 
     atoms_c1 = [a for a in struct_model.atoms
                 if a.residue.chain_id == chain1_id and _eligible_polar_atom(a)]
@@ -220,6 +269,15 @@ def _native_add_polar(session, model_input, chain1_id, chain2_id,
     # A residue pair is omitted entirely if its closest qualifying polar
     # contact is itself a conventional salt-bridge atom pair. This prevents
     # the same residue pair from appearing in both categories.
+    excluded_hbond_pairs.update(
+        _existing_hbond_pairs(session, struct_model, chain1_id, target_chains)
+    )
+    removed_hbonds = sum(key in residue_pairs for key in excluded_hbond_pairs)
+    if removed_hbonds:
+        session.logger.info(
+            f'[add_polar] Excluded {removed_hbonds} polar residue pair(s) '
+            'already present in the hydrogen-bond groups.'
+        )
     for key in excluded_hbond_pairs:
         residue_pairs.pop(key, None)
     for key in excluded_salt_pairs:
