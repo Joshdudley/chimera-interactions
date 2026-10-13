@@ -1,6 +1,6 @@
 # ChimeraX Protein Interface Interactions
 
-Six ChimeraX commands for inspecting contacts between a source protein chain and one or more partner chains. Each command creates a parent model with a subgroup for every requested chain pair, including pairs with zero contacts.
+Six ChimeraX detection commands plus `show_interactions` for inspecting contacts between a source protein chain and one or more partner chains. Each detection command creates a parent model with a subgroup for every requested chain pair, including pairs with zero contacts.
 
 These scripts run **inside UCSF ChimeraX**. They are visualization and screening tools: a proximity match is a candidate interaction, not a measurement of binding energy.
 
@@ -14,6 +14,7 @@ These scripts run **inside UCSF ChimeraX**. They are visualization and screening
 | [`add_polar.py`](add_polar.py) | `add_polar` | Closest eligible O/N/S contact within 4.0 Å. Includes standard amino-acid backbone N/O and selected side chains; excludes residue pairs qualifying as hydrogen bonds and conventional salt-bridge atom pairs. |
 | [`add_pi.py`](add_pi.py) | `add_pi` | Aromatic ring–ring, cation–π, and sulfur–π candidates. Uses a 6.5 Å ring-centroid cutoff or a 5.5 Å nearest-ring-atom criterion for ring–ring contacts, and a 5.5 Å cutoff for aromatic partners. |
 | [`add_bad_hydrophobic.py`](add_bad_hydrophobic.py) | `add_bad_hydrophobic` | Non-carbonyl carbon of a hydrophobic residue near an O/N atom across the interface, within 3.5 Å; closest contact per residue pair. A proximity flag, not proof that the contact is energetically unfavorable. |
+| [`show_interactions.py`](show_interactions.py) | `show_interactions`, `hide_interactions` | Displays existing interaction lines and contacting sidechains; can filter chain pairs, retain extra residues, control distance labels and hide other chains. |
 
 The categories are based on the scripts' specific atom lists and distance rules. The carbon filters above include backbone `CA` because they exclude only the carbonyl carbon `C`. Hydrogen bonds use a heavy-atom distance proxy rather than an angle criterion. The π detector does not require ring-plane orientation. Polar contacts are suppressed for a residue pair when it meets the hydrogen-bond rules, preventing a second polar line over that pair's hydrogen-bond line.
 
@@ -29,6 +30,7 @@ The categories are based on the scripts' specific atom lists and distance rules.
    runscript /path/to/chimera-interactions/add_polar.py
    runscript /path/to/chimera-interactions/add_pi.py
    runscript /path/to/chimera-interactions/add_bad_hydrophobic.py
+   runscript /path/to/chimera-interactions/show_interactions.py
    ```
 
 `runscript` registers each command in the current ChimeraX session. Loading a newer version of a script again can produce ChimeraX's informational “replacing existing command” message.
@@ -55,6 +57,24 @@ add_bad_hydrophobic #2 A B-E printFile no #2.6 showLabels no
 Each destination parent ID must be unused when its command runs. For example, `add_pi ... #2.5` creates `#2.5.1` for A–B, `#2.5.2` for A–C, `#2.5.3` for A–D, and `#2.5.4` for A–E. The corresponding subgroup names are `Model_2_pi_Chain_A_to_Chain_B` through `Model_2_pi_Chain_A_to_Chain_E`. To rebuild a family at the same IDs, close its existing parent model first or choose a new destination ID.
 
 `showLabels no` keeps distance labels hidden initially; omitting it defaults to `yes`. Generated chain-pair groups start hidden so you can reveal the contacts you want to inspect in ChimeraX. Zero-contact chain pairs still get an empty subgroup.
+
+## Display interactions
+
+After running the six detection commands, show all existing interactions for model `#2`:
+
+```chimerax
+show_interactions #2
+```
+
+This also shows cartoons for chains with interactions, including chains hidden by an earlier filtered call. To show particular interfaces, use chain pairs such as `A-D` (A with D, not a range):
+
+```chimerax
+show_interactions #2 A-D A-E keep #2/D:8,44,70 #2/E:8,44,70 display_Dist false
+show_interactions #2 A-B hide_other_chains false
+hide_interactions #2
+```
+
+`keep` adds listed residues to the display even if they have no selected contacts. `display_Dist true|false` controls distance labels; omitting it preserves the current visibility of labels in selected groups. For filtered calls, `hide_other_chains true` is the default and hides cartoons and atoms of other chains. Set it to `false` to leave other chains' current display alone. `hide_interactions #2` hides the existing interaction lines and protein atoms; it does not delete interactions.
 
 ## Output and interpretation
 
