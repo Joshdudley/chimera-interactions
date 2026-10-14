@@ -464,8 +464,7 @@ def _native_add_pi(session, model_input, chain1_id, chain2_id, print_file_keywor
         # The group is discovered through the model tree after creation rather
         # than assuming get_group() has already assigned a model ID.
         try:
-            from chimerax.atomic import PseudobondManager
-            empty_group = PseudobondManager(session).get_group(temporary_group_name, create=True)
+            empty_group = session.pb_manager.get_group(temporary_group_name, create=True)
             if empty_group is None:
                 raise RuntimeError("PseudobondManager.get_group() returned None")
 
@@ -850,6 +849,68 @@ def _suite_restore(snap):
         except Exception: pass
 
 
+def _suite_prepare_rebuild(session, source_id, parent_spec, chain1, targets):
+    """Replace only this add_pi family and clear its retained global bonds."""
+    expected_parent = f'Model_{source_id}_pi'
+    existing = _suite_find_model(session, parent_spec)
+    old_names = set()
+    if existing is not None:
+        if getattr(existing, 'name', None) != expected_parent or hasattr(existing, 'atoms'):
+            session.logger.error(
+                f'[add_pi] Destination {parent_spec} belongs to another model '
+                f'({getattr(existing, "name", "unnamed")}); it was not replaced.'
+            )
+            return False
+        try:
+            descendants = list(existing.all_models())
+        except Exception:
+            descendants = [existing]
+        group_prefix = f'Model_{source_id}_pi_Chain_{chain1}_to_Chain_'
+        for child in descendants:
+            name = str(getattr(child, 'name', ''))
+            if name.startswith(group_prefix) and hasattr(child, 'pseudobonds'):
+                old_names.add(name)
+        try:
+            run(session, f'close {parent_spec}')
+        except Exception as error:
+            session.logger.error(f'[add_pi] Could not close {parent_spec}: {error}')
+            return False
+        if _suite_find_model(session, parent_spec) is not None:
+            session.logger.error(f'[add_pi] Could not clear destination {parent_spec}.')
+            return False
+
+    # Closing a parent can leave global pseudobond groups registered by name.
+    # Include requested chain pairs even if the parent was closed earlier.
+    for target in targets:
+        old_names.add(f'Model_{source_id}_pi_Chain_{chain1}_to_Chain_{target}')
+    try:
+        manager = session.pb_manager
+        cleared = 0
+        for name in sorted(old_names):
+            group = manager.get_group(name, create=False)
+            if group is not None and len(group.pseudobonds):
+                cleared += len(group.pseudobonds)
+                group.pseudobonds.delete()
+        if cleared:
+            session.logger.info(f'[add_pi] Cleared {cleared} retained pseudobond(s).')
+    except Exception as error:
+        session.logger.error(f'[add_pi] Could not clear retained pseudobonds: {error}')
+        return False
+
+    # The pi command creates separate centroid markers that are not children
+    # of its interaction parent. Remove only this source/chain's old markers.
+    marker_prefix = f'pi_centroids_Model_{source_id}_Chain_{chain1}_to_Chain_'
+    for model in list(_suite_all_models(session)):
+        if str(getattr(model, 'name', '')).startswith(marker_prefix):
+            try:
+                run(session, f'close {_suite_model_spec(model)}')
+            except Exception as error:
+                session.logger.error(f'[add_pi] Could not close old centroid markers: {error}')
+                return False
+
+    return True
+
+
 def add_pi(session, model_input, chain1_id, chain2_id, print_file_keyword, print_file_value, interaction_model_id, showLabels='yes'):
     chain2_list=_suite_chain_list(chain2_id)
     if not chain2_list:
@@ -863,11 +924,10 @@ def add_pi(session, model_input, chain1_id, chain2_id, print_file_keyword, print
     if not parent_spec.startswith('#'):
         session.logger.error('[add_pi] Parent interaction model must look like #2.1.')
         return
-    if _suite_find_model(session,parent_spec) is not None:
-        session.logger.error(f'[add_pi] Parent model {parent_spec} already exists. Remove it before rebuilding this interaction family.')
-        return
-
     source_id='_'.join(map(str,source.id))
+    if not _suite_prepare_rebuild(session, source_id, parent_spec,
+                                  str(chain1_id), chain2_list):
+        return
     parent=Model(f'Model_{source_id}_pi',session)
     session.models.add([parent])
     run(session, f'rename {_suite_model_spec(parent)} name "Model_{source_id}_pi" id {parent_spec}')

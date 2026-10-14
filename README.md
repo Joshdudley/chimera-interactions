@@ -56,7 +56,7 @@ add_pi #2 A B-E printFile no #2.5 showLabels no
 add_bad_hydrophobic #2 A B-E printFile no #2.6 showLabels no
 ```
 
-Each destination parent ID must be unused when its command runs. For example, `add_pi ... #2.5` creates `#2.5.1` for A–B, `#2.5.2` for A–C, `#2.5.3` for A–D, and `#2.5.4` for A–E. The corresponding subgroup names are `Model_2_pi_Chain_A_to_Chain_B` through `Model_2_pi_Chain_A_to_Chain_E`. To rebuild a family at the same IDs, close its existing parent model first or choose a new destination ID.
+For example, `add_pi ... #2.5` creates `#2.5.1` for A–B, `#2.5.2` for A–C, `#2.5.3` for A–D, and `#2.5.4` for A–E. The corresponding subgroup names are `Model_2_pi_Chain_A_to_Chain_B` through `Model_2_pi_Chain_A_to_Chain_E`. Rerunning any `add_*` command at its existing parent ID closes and rebuilds that interaction family, clears retained pseudobonds, and reuses the ID. For `add_pi`, old centroid markers for that source and chain are removed too. If the destination ID belongs to another model, the command stops without replacing it. Run `add_hbond` before `add_polar` when rebuilding both families so polar contacts can exclude residue pairs already drawn as hydrogen bonds.
 
 `showLabels no` keeps distance labels hidden initially; omitting it defaults to `yes`. Generated chain-pair groups start hidden so you can reveal the contacts you want to inspect in ChimeraX. Zero-contact chain pairs still get an empty subgroup.
 
@@ -115,7 +115,7 @@ Distances and residue eligibility are deliberately simple screening choices. Str
 | Symptom | What to check |
 | --- | --- |
 | Source model not found | Use the exact coordinate model ID shown in ChimeraX, including `#`. |
-| Destination parent already exists | Close that interaction parent or choose another unused parent ID. |
+| Destination parent belongs to another model | Choose an unused parent ID; the command will not replace an unrelated model. |
 | No contacts for a chain pair | Check its empty subgroup; the structure may have no contacts under the command's cutoff. |
 | Command is unknown | Run the corresponding script with `runscript` in the current ChimeraX session. |
 

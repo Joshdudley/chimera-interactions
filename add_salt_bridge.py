@@ -197,8 +197,7 @@ def _native_add_salt_bridge(session, model_input, chain1_id, chain2_id, print_fi
     if not detected_id_str:
         # A valid interface may contain no contacts. Keep its empty subgroup.
         try:
-            from chimerax.atomic import PseudobondManager
-            empty_group = PseudobondManager(session).get_group(temporary_group_name, create=True)
+            empty_group = session.pb_manager.get_group(temporary_group_name, create=True)
             if empty_group is None:
                 raise RuntimeError("PseudobondManager.get_group() returned None")
             if not any(m is empty_group for m in _suite_all_models(session)):
@@ -399,6 +398,57 @@ def _suite_restore(snap):
         except Exception: pass
 
 
+def _suite_prepare_rebuild(session, source_id, parent_spec, chain1, targets):
+    """Replace only this add_salt_bridge family and clear its retained global bonds."""
+    expected_parent = f'Model_{source_id}_salt_bridge'
+    existing = _suite_find_model(session, parent_spec)
+    old_names = set()
+    if existing is not None:
+        if getattr(existing, 'name', None) != expected_parent or hasattr(existing, 'atoms'):
+            session.logger.error(
+                f'[add_salt_bridge] Destination {parent_spec} belongs to another model '
+                f'({getattr(existing, "name", "unnamed")}); it was not replaced.'
+            )
+            return False
+        try:
+            descendants = list(existing.all_models())
+        except Exception:
+            descendants = [existing]
+        group_prefix = f'Model_{source_id}_salt_bridge_Chain_{chain1}_to_Chain_'
+        for child in descendants:
+            name = str(getattr(child, 'name', ''))
+            if name.startswith(group_prefix) and hasattr(child, 'pseudobonds'):
+                old_names.add(name)
+        try:
+            run(session, f'close {parent_spec}')
+        except Exception as error:
+            session.logger.error(f'[add_salt_bridge] Could not close {parent_spec}: {error}')
+            return False
+        if _suite_find_model(session, parent_spec) is not None:
+            session.logger.error(f'[add_salt_bridge] Could not clear destination {parent_spec}.')
+            return False
+
+    # Closing a parent can leave global pseudobond groups registered by name.
+    # Include requested chain pairs even if the parent was closed earlier.
+    for target in targets:
+        old_names.add(f'Model_{source_id}_salt_bridge_Chain_{chain1}_to_Chain_{target}')
+    try:
+        manager = session.pb_manager
+        cleared = 0
+        for name in sorted(old_names):
+            group = manager.get_group(name, create=False)
+            if group is not None and len(group.pseudobonds):
+                cleared += len(group.pseudobonds)
+                group.pseudobonds.delete()
+        if cleared:
+            session.logger.info(f'[add_salt_bridge] Cleared {cleared} retained pseudobond(s).')
+    except Exception as error:
+        session.logger.error(f'[add_salt_bridge] Could not clear retained pseudobonds: {error}')
+        return False
+
+    return True
+
+
 def add_salt_bridge(session, model_input, chain1_id, chain2_id, print_file_keyword, print_file_value, interaction_model_id, showLabels='yes'):
     chain2_list=_suite_chain_list(chain2_id)
     if not chain2_list:
@@ -412,11 +462,10 @@ def add_salt_bridge(session, model_input, chain1_id, chain2_id, print_file_keywo
     if not parent_spec.startswith('#'):
         session.logger.error('[add_salt_bridge] Parent interaction model must look like #2.1.')
         return
-    if _suite_find_model(session,parent_spec) is not None:
-        session.logger.error(f'[add_salt_bridge] Parent model {parent_spec} already exists. Remove it before rebuilding this interaction family.')
-        return
-
     source_id='_'.join(map(str,source.id))
+    if not _suite_prepare_rebuild(session, source_id, parent_spec,
+                                  str(chain1_id), chain2_list):
+        return
     parent=Model(f'Model_{source_id}_salt_bridge',session)
     session.models.add([parent])
     run(session, f'rename {_suite_model_spec(parent)} name "Model_{source_id}_salt_bridge" id {parent_spec}')
