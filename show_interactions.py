@@ -12,6 +12,8 @@ For specific pairs, hide_other_chains defaults to true; false preserves the
 current cartoon and atom display of chains outside the requested interfaces.
 Without chain pairs, chains with displayed interactions are shown even if their
 cartoons were previously hidden.
+Hydrogens are shown only when they are endpoints of the displayed interactions,
+including for extra residues requested with ``keep``.
 """
 import re
 from chimerax.core.commands import CmdDesc, RestOfLine, register, run
@@ -160,6 +162,12 @@ def show_protein(session, source, residues, endpoints):
         run(session, 'show sel atoms')
         run(session, 'style sel stick')
         run(session, 'color sel byhetero')
+    # Enforce this after all show/style commands and backbone-neighbor expansion.
+    # A visible side chain (or a keep residue) must not reveal unrelated H atoms.
+    for residue in residues:
+        for atom in residue.atoms:
+            if getattr(getattr(atom, 'element', None), 'name', '') == 'H':
+                atom.display = atom in endpoints
     run(session, 'select clear')
 
 
