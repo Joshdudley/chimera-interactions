@@ -1,6 +1,6 @@
 # ChimeraX Protein Interface Interactions
 
-Six ChimeraX detection commands plus `show_interactions` for inspecting contacts between a source protein chain and one or more partner chains. Each detection command creates a parent model with a subgroup for every requested chain pair, including pairs with zero contacts.
+Six ChimeraX detection commands plus `show_interactions` for inspecting contacts between chains in the same or different coordinate models. Either endpoint can specify one chain or a chain range. Each detection command creates a parent model with a subgroup for every requested endpoint chain pair, including pairs with zero contacts.
 
 These scripts run **inside UCSF ChimeraX**. They are visualization and screening tools: a proximity match is a candidate interaction, not a measurement of binding energy.
 
@@ -42,41 +42,52 @@ The categories are based on the scripts' specific atom lists and distance rules.
 All six commands use the same argument order:
 
 ```text
-COMMAND #SOURCE_MODEL SOURCE_CHAIN TARGET_CHAIN_OR_RANGE printFile yes|no #PARENT_MODEL [showLabels yes|no]
+COMMAND #MODEL1/CHAIN_OR_RANGE #MODEL2/CHAIN_OR_RANGE printFile yes|no #PARENT_MODEL [showLabels yes|no]
 ```
 
-For a coordinate model `#2`, compare chain `A` with chains `B` through `E`:
+For example, compare chain `A` in model `#21.1` with chains `B` through `E` in model `#21.3`:
 
 ```chimerax
-add_hydrophobic #2 A B-E printFile no #2.1 showLabels no
-add_hbond #2 A B-E printFile no #2.2 showLabels no
-add_salt_bridge #2 A B-E printFile no #2.3 showLabels no
-add_polar #2 A B-E printFile no #2.4 showLabels no
-add_pi #2 A B-E printFile no #2.5 showLabels no
-add_bad_hydrophobic #2 A B-E printFile no #2.6 showLabels no
+add_hydrophobic #21.1/A #21.3/B-E printFile no #21.5.1 showLabels no
+add_hbond #21.1/A #21.3/B-E printFile no #21.5.2 showLabels no
+add_salt_bridge #21.1/A #21.3/B-E printFile no #21.5.3 showLabels no
+add_polar #21.1/A #21.3/B-E printFile no #21.5.4 showLabels no
+add_pi #21.1/A #21.3/B-E printFile no #21.5.5 showLabels no
+add_bad_hydrophobic #21.1/A #21.3/B-E printFile no #21.5.6 showLabels no
 ```
 
-For example, `add_pi ... #2.5` creates `#2.5.1` for A–B, `#2.5.2` for A–C, `#2.5.3` for A–D, and `#2.5.4` for A–E. The corresponding subgroup names are `Model_2_pi_Chain_A_to_Chain_B` through `Model_2_pi_Chain_A_to_Chain_E`. Rerunning any `add_*` command at its existing parent ID closes and rebuilds that interaction family, clears retained pseudobonds, and reuses the ID. For `add_pi`, old centroid markers for that source and chain are removed too. If the destination ID belongs to another model, the command stops without replacing it. Run `add_hbond` before `add_polar` when rebuilding both families so polar contacts can exclude residue pairs already drawn as hydrogen bonds.
+Ranges are accepted on either endpoint. For example, `#21.1/A-C` versus `#21.3/D-F` evaluates all nine chain pairs A-D, A-E, A-F, B-D, B-E, B-F, C-D, C-E, and C-F. The two endpoints may also refer to the same coordinate model. Distances are evaluated in ChimeraX scene coordinates so separately positioned models are compared in their displayed positions.
 
-`showLabels no` keeps distance labels hidden initially; omitting it defaults to `yes`. Generated chain-pair groups start hidden so you can reveal the contacts you want to inspect in ChimeraX. Zero-contact chain pairs still get an empty subgroup.
+For example, `add_pi #21.1/A #21.3/B-E ... #21.5.5` creates one child subgroup for each requested chain pair under `#21.5.5`. Rerunning any `add_*` command at its existing parent ID closes and rebuilds that interaction family, clears retained pseudobonds, and reuses the ID. For `add_pi`, old centroid markers associated with that interaction family are removed too. If the destination ID belongs to another model, the command stops without replacing it. Run `add_hbond` before `add_polar` when rebuilding both families so polar contacts can exclude residue pairs already drawn as hydrogen bonds.
+
+`showLabels no` keeps distance labels hidden initially; omitting it defaults to `yes`. The scripts create distance-label models even when the labels are hidden, so they can be shown later. Generated chain-pair groups start hidden so you can reveal the contacts you want to inspect in ChimeraX. Zero-contact chain pairs still get an empty subgroup. Empty groups and existing groups now use ChimeraX's session pseudobond manager, so their parent structures can be closed and the analysis run again without the pseudobond-manager deletion error.
 
 ## Display interactions
 
-After running the six detection commands, show all existing interactions for model `#2`:
+After running the detection commands, use the same endpoint syntax to display the existing interaction groups. For example:
 
 ```chimerax
-show_interactions #2
+show_interactions #21.1/A #21.3/B display_Dist false
 ```
 
-This also shows cartoons for chains with interactions, including chains hidden by an earlier filtered call. To show particular interfaces, use chain pairs such as `A-D` (A with D, not a range):
+Chain ranges are accepted on either side:
 
 ```chimerax
-show_interactions #2 A-D A-E keep #2/D:8,44,70 #2/E:8,44,70 display_Dist false
-show_interactions #2 A-B hide_other_chains false
-hide_interactions #2
+show_interactions #21.1/A-C #21.3/D-F display_Dist false
+hide_interactions #21.1/A-C #21.3/D-F
 ```
 
-`keep` adds listed residues to the display even if they have no selected contacts. `display_Dist true|false` controls distance labels; omitting it preserves the current visibility of labels in selected groups. For filtered calls, `hide_other_chains true` is the default and hides cartoons and atoms of other chains. Set it to `false` to leave other chains' current display alone. `hide_interactions #2` hides the existing interaction lines and protein atoms; it does not delete interactions.
+`show_interactions` reads the interaction groups that were already generated; it does not rerun the chemistry detectors. It shows the selected pseudobonds and contacting residues from both coordinate models. `display_Dist true|false` controls distance labels; omitting it preserves the current visibility of the selected groups' distance labels.
+
+`keep` can retain extra residues from either coordinate model even if those residues have no selected contacts. For example:
+
+```chimerax
+show_interactions #21.1/A #21.3/B keep #21.1/A:44,70 #21.3/B:183 display_Dist false
+```
+
+For filtered calls, `hide_other_chains true` is the default; use `hide_other_chains false` if you want unrelated chains to retain their current display state. `hide_interactions` hides matching existing interaction lines and their displayed interaction atoms; it does not delete the interaction groups.
+
+To rerun a scripted scene with fixed model numbers, start with `close all` **before opening its structures**. This clears the previous run's models, so newly opened structures receive the intended numbers. If ChimeraX has assigned a built-in `missing structure` submodel to an ID reserved for an interaction family, choose an unused interaction-family ID or close that specific submodel after opening the structure and before calling the corresponding `add_*` command. Closing it removes the missing-segment pseudobond display, not the protein atoms.
 
 ## Compare with PDBe Arpeggio
 
@@ -84,8 +95,9 @@ The `printFile yes` summaries from the six detection commands contain totals per
 
 ```chimerax
 runscript /path/to/chimera-interactions/export_interactions.py
-export_interactions #2 2_interactions.csv
-save structure.cif models #2
+export_interactions #21.5 interactions.csv
+save structure_21_1.cif models #21.1
+save structure_21_3.cif models #21.3
 ```
 
 `export_interactions` includes hidden contacts and an explicit row for each chain-pair group with zero contacts. It does not rerun the detectors. If the structure is already available as mmCIF, use the same underlying structure for Arpeggio. The current PDBe Arpeggio implementation accepts mmCIF input and produces JSON; run it separately, for example:
@@ -97,7 +109,7 @@ pdbe-arpeggio structure.cif -o arpeggio_output/
 Then compare the exported CSV with Arpeggio's interaction JSON using ordinary Python (outside ChimeraX):
 
 ```bash
-python3 compare_interactions.py 2_interactions.csv path/to/arpeggio.json --output interaction_comparison.csv
+python3 compare_interactions.py interactions.csv path/to/arpeggio.json --output interaction_comparison.csv
 ```
 
 This writes `interaction_comparison.csv` and `interaction_comparison_summary.txt`. The statuses `both`, `chimera_only`, and `arpeggio_only` refer to a chain pair, residue pair, and interaction category; multiple Arpeggio atom contacts for the same pair count once. A difference is a candidate to inspect, since the programs use different chemical rules and geometry. `bad_hydrophobic` has no direct Arpeggio category and is excluded from the category comparison. The export warns when a saved π centroid cannot be mapped unambiguously to a protein residue; the reported contact total should be checked before interpreting a comparison. Chain IDs, residue numbers, and insertion codes must match between the ChimeraX export and the mmCIF used by Arpeggio.
@@ -114,9 +126,12 @@ Distances and residue eligibility are deliberately simple screening choices. Str
 
 | Symptom | What to check |
 | --- | --- |
-| Source model not found | Use the exact coordinate model ID shown in ChimeraX, including `#`. |
+| Endpoint model or chain not found | Use an exact endpoint such as `#21.1/A` or a valid range such as `#21.3/B-F`. |
 | Destination parent belongs to another model | Choose an unused parent ID; the command will not replace an unrelated model. |
+| `#4.1` belongs to `missing structure` | ChimeraX created that submodel when opening the structure. Free the ID or choose a different interaction-family ID before running `add_hydrophobic`. |
+| Distance labels appear unexpectedly | Specify `display_Dist false` on the `show_interactions` call. |
+| Closing a structure reports `group not in manager` | Replace all six `add_*` scripts with the versions that use `session.pb_manager`, then start a fresh ChimeraX window before rebuilding the scene. Existing groups created by older scripts may remain affected. |
 | No contacts for a chain pair | Check its empty subgroup; the structure may have no contacts under the command's cutoff. |
 | Command is unknown | Run the corresponding script with `runscript` in the current ChimeraX session. |
 
-The ChimeraX model number in these examples is illustrative. Substitute your own source model, chain IDs, and unused destination IDs.
+The ChimeraX model numbers and chain IDs in these examples are illustrative. Substitute your own endpoint model IDs, chain IDs or ranges, and unused destination IDs.

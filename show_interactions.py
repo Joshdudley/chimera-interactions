@@ -1,281 +1,235 @@
-"""Show interaction groups made by the six add_* ChimeraX commands.
+"""Show/hide interaction groups created by chimerax_add_interactions_multimodel.py.
 
-    runscript /path/to/show_interactions.py
-    show_interactions #2
-    show_interactions #2 A-D A-E keep #2/D:8,44,70 #2/E:8,44,70 display_Dist false
-    show_interactions #2 A-B hide_other_chains false
-    hide_interactions #2
+Examples:
+  runscript /path/to/show_interactions_multimodel.py
+  show_interactions #21.1/A #21.3/B display_Dist false
+  show_interactions #21.1/A-C #21.3/B-F display_Dist false
+  show_interactions #21.1/A #21.3/B keep #21.1/A:10,20 #21.3/B:30 display_Dist false
+  hide_interactions #21.1/A #21.3/B
 
-Chain pairs such as A-D select interfaces. ``keep`` shows extra residues.
-Omitting display_Dist preserves the distance-label visibility of selected groups.
-For specific pairs, hide_other_chains defaults to true; false preserves the
-current cartoon and atom display of chains outside the requested interfaces.
-Without chain pairs, chains with displayed interactions are shown even if their
-cartoons were previously hidden.
-Hydrogens are shown only when they are endpoints of the displayed interactions,
-including for extra residues requested with ``keep``.
+Both endpoints accept one chain or a letter range. The command displays existing
+interaction pseudobonds; it does not re-run interaction detection.
 """
 import re
+import numpy as np
 from chimerax.core.commands import CmdDesc, RestOfLine, register, run
 
-NAME = re.compile(r'^Model_(?P<model>\d+(?:_\d+)*)_(?P<kind>bad_hydrophobic|salt_bridge|hydrophobic|hbond|polar|pi)_Chain_(?P<a>[^_]+)_to_Chain_(?P<b>[^_]+)$')
+GROUP = re.compile(r'^Model_(?P<m1>\d+(?:_\d+)*)_(?P<c1>[^_]+)_to_(?P<m2>\d+(?:_\d+)*)_(?P<c2>[^_]+)_(?P<kind>bad_hydrophobic|salt_bridge|hydrophobic|hbond|polar|pi)$')
+ENDPOINT = re.compile(r'^#(?P<model>\d+(?:\.\d+)*)/(?P<chains>[^/\s]+)$')
 KEEP = re.compile(r'^(#\d+(?:\.\d+)*)/([^/:]+):([\d,]+)$')
-PAIR = re.compile(r'^([^/#:\s-]+)-([^/#:\s-]+)$')
 
 
-def models(session):
-    seen = set()
-    for root in session.models:
-        try:
-            family = root.all_models()
-        except Exception:
-            family = (root,)
-        for model in family:
-            if id(model) not in seen:
-                seen.add(id(model))
-                yield model
+def all_models(session):
+    seen=set(); out=[]
+    def walk(items):
+        for m in items:
+            if id(m) in seen: continue
+            seen.add(id(m)); out.append(m)
+            try: walk(list(m.child_models()))
+            except Exception: pass
+    walk(list(session.models)); return out
 
 
-def spec(model):
-    return '#' + '.'.join(map(str, model.id))
+def spec(model): return '#' + '.'.join(map(str, model.id))
 
+def chains(text):
+    if '-' not in text: return [text]
+    p=text.split('-')
+    if len(p)!=2 or len(p[0])!=1 or len(p[1])!=1:
+        raise ValueError('Chain range must look like A-C or B-F.')
+    a,b=map(ord,p); step=1 if b>=a else -1
+    return [chr(x) for x in range(a,b+step,step)]
+
+def endpoint(text):
+    m=ENDPOINT.fullmatch(text)
+    if not m: raise ValueError('Endpoint must look like #21.1/A or #21.3/B-F.')
+    return m['model'], chains(m['chains'])
+
+def find_structure(session, mid):
+    wanted='#'+mid
+    for m in all_models(session):
+        if spec(m)==wanted and hasattr(m,'atoms'): return m
+    return None
 
 def parse(arguments):
-    words = str(arguments).split()
-    if not words or not re.fullmatch(r'#\d+(?:\.\d+)*', words[0]):
-        raise ValueError('Specify a coordinate model, such as #2.')
-    source_spec = words.pop(0)
-    pairs, keeps, labels, in_keep, hide_other_chains = set(), [], None, False, True
-    i = 0
-    while i < len(words):
-        word = words[i]
-        if word.lower() == 'keep':
-            in_keep = True
-        elif word.lower() in ('display_dist', 'displaydist'):
-            i += 1
-            if i >= len(words) or words[i].lower() not in ('true', 'false', 'yes', 'no'):
+    words=str(arguments).split()
+    if len(words)<2: raise ValueError('Specify two endpoints, e.g. #21.1/A #21.3/B-F.')
+    e1,e2=words.pop(0),words.pop(0)
+    id1,cs1=endpoint(e1); id2,cs2=endpoint(e2)
+    keeps=[]; labels=None; hide_others=True; in_keep=False
+    i=0
+    while i<len(words):
+        w=words[i]
+        low=w.lower()
+        if low=='keep': in_keep=True
+        elif low in ('display_dist','displaydist'):
+            i+=1
+            if i>=len(words) or words[i].lower() not in ('true','false','yes','no'):
                 raise ValueError('display_Dist requires true or false.')
-            labels = words[i].lower() in ('true', 'yes')
-            in_keep = False
-        elif word.lower() in ('hide_other_chains', 'hideotherchains'):
-            i += 1
-            if i >= len(words) or words[i].lower() not in ('true', 'false', 'yes', 'no'):
+            labels=words[i].lower() in ('true','yes'); in_keep=False
+        elif low in ('hide_other_chains','hideotherchains'):
+            i+=1
+            if i>=len(words) or words[i].lower() not in ('true','false','yes','no'):
                 raise ValueError('hide_other_chains requires true or false.')
-            hide_other_chains = words[i].lower() in ('true', 'yes')
-            in_keep = False
+            hide_others=words[i].lower() in ('true','yes'); in_keep=False
         elif in_keep:
-            match = KEEP.fullmatch(word)
-            if not match:
-                raise ValueError('Invalid keep residue specification: ' + word)
-            if match[1] != source_spec:
-                raise ValueError('Extra residues must reference the same coordinate model.')
-            keeps.append((match[2], {int(n) for n in match[3].split(',') if n}))
+            km=KEEP.fullmatch(w)
+            if not km: raise ValueError('Invalid keep residue specification: '+w)
+            keeps.append((km[1][1:],km[2],{int(n) for n in km[3].split(',') if n}))
         else:
-            match = PAIR.fullmatch(word)
-            if not match:
-                raise ValueError('Invalid chain pair ' + word)
-            pairs.add(frozenset((match[1], match[2])))
-        i += 1
-    return source_spec, pairs, keeps, labels, hide_other_chains
+            raise ValueError('Unknown option: '+w)
+        i+=1
+    return id1,cs1,id2,cs2,keeps,labels,hide_others
 
-
-def details(group, source):
-    if not hasattr(group, 'pseudobonds') or hasattr(group, 'atoms'):
-        return None
-    match = NAME.fullmatch(str(getattr(group, 'name', '')))
-    if match and match['model'] == '_'.join(map(str, source.id)):
-        return match['kind'], match['a'], match['b']
-    if str(getattr(group, '_interaction_suite_source_id', '')) == '_'.join(map(str, source.id)):
-        values = [getattr(group, '_interaction_suite_' + key, None)
-                  for key in ('kind', 'chain1', 'chain2')]
-        if all(values):
-            return tuple(map(str, values))
-    return None
-
+def group_details(group):
+    if not hasattr(group,'pseudobonds') or hasattr(group,'atoms'): return None
+    m=GROUP.fullmatch(str(getattr(group,'name','')))
+    if not m: return None
+    return m['m1'].replace('_','.'),m['c1'],m['m2'].replace('_','.'),m['c2'],m['kind']
 
 def label_models(group):
-    try:
-        children = list(group.all_models())[1:]
+    try: children=list(group.all_models())[1:]
     except Exception:
-        children = list(group.child_models()) if hasattr(group, 'child_models') else []
-    return [child for child in children if str(getattr(child, 'name', '')).lower()
-            in ('distance', 'distances', 'label', 'labels')]
+        try: children=list(group.child_models())
+        except Exception: children=[]
+    return [c for c in children if ('distance' in str(getattr(c,'name','')).lower() or 'label' in str(getattr(c,'name','')).lower())]
 
-
-def protein_residue(atom, source, chains):
-    residue = getattr(atom, 'residue', None)
-    if residue is not None and getattr(residue, 'structure', None) is source:
-        return residue
-    marker = getattr(atom, 'structure', None)
-    residue = getattr(marker, '_pi_source_residue_map', {}).get(id(atom))
-    if residue is not None and getattr(residue, 'structure', None) is source:
-        return residue
-    # Arbitrary marker attributes are not guaranteed to survive a saved session.
-    # Accept a reloaded pi centroid only if its nearest source residue is unique.
-    try:
-        import numpy as np
-        pos = getattr(atom, 'scene_coord', None)
-        if pos is None:
-            pos = atom.coord
-        candidates = []
-        for r in source.residues:
-            if r.chain_id not in chains:
-                continue
-            ds = []
-            for a in r.atoms:
-                if getattr(a.element, 'name', '') != 'H':
-                    coord = getattr(a, 'scene_coord', None)
-                    ds.append(float(np.linalg.norm(pos - (coord if coord is not None else a.coord))))
-            if ds:
-                candidates.append((min(ds), r))
-        candidates.sort(key=lambda item: item[0])
-        if candidates and candidates[0][0] <= 3.0 and (len(candidates) == 1 or candidates[1][0] - candidates[0][0] >= 0.15):
-            return candidates[0][1]
-    except (AttributeError, TypeError, ValueError):
-        pass
+def residue_for_atom(atom, structures, allowed):
+    r=getattr(atom,'residue',None)
+    if r is not None:
+        for mid,model in structures.items():
+            if getattr(r,'structure',None) is model and (mid,r.chain_id) in allowed:
+                return r
+    # pi centroid marker: infer the nearest unique residue in either requested endpoint.
+    pos=np.asarray(getattr(atom,'scene_coord',getattr(atom,'coord',None)),dtype=float)
+    candidates=[]
+    for mid,model in structures.items():
+        for rr in model.residues:
+            if (mid,rr.chain_id) not in allowed: continue
+            heavy=[a for a in rr.atoms if getattr(a.element,'name','')!='H']
+            if not heavy: continue
+            d=min(float(np.linalg.norm(pos-np.asarray(getattr(a,'scene_coord',a.coord),dtype=float))) for a in heavy)
+            candidates.append((d,rr))
+    candidates.sort(key=lambda x:x[0])
+    if candidates and candidates[0][0]<=3.0 and (len(candidates)==1 or candidates[1][0]-candidates[0][0]>=0.15):
+        return candidates[0][1]
     return None
 
-
-def show_protein(session, source, residues, endpoints):
-    by_chain = {}
+def show_residues(session, structures, residues, endpoints):
+    by_model_chain={}
     for r in residues:
-        by_chain.setdefault(r.chain_id, set()).add(r.number)
-    chosen = [f'{spec(source)}/{c}:{",".join(map(str, sorted(nums)))} & sidechain & ~H'
-              for c, nums in sorted(by_chain.items())]
-    extras = set()
-    for atom in endpoints:
-        r = getattr(atom, 'residue', None)
-        if r is None or getattr(r, 'structure', None) is not source:
-            continue
-        if getattr(getattr(atom, 'element', None), 'name', '') == 'H' or getattr(atom, 'is_backbone', False):
-            extras.add(atom)
-            if getattr(atom, 'is_backbone', False):
-                for bond in getattr(atom, 'bonds', ()):
-                    extras.update(a for a in bond.atoms if getattr(a, 'is_backbone', False))
-    for a in sorted(extras, key=lambda atom: (atom.residue.chain_id, atom.residue.number, atom.name)):
-        chosen.append(f'{spec(source)}/{a.residue.chain_id}:{a.residue.number}@{a.name}')
-    run(session, 'select clear')
+        mid=next((k for k,v in structures.items() if v is getattr(r,'structure',None)),None)
+        if mid: by_model_chain.setdefault((mid,r.chain_id),set()).add(r.number)
+    chosen=[]
+    for (mid,ch),nums in sorted(by_model_chain.items()):
+        chosen.append(f'#{mid}/{ch}:{",".join(map(str,sorted(nums)))} & sidechain & ~H')
+    for a in endpoints:
+        r=getattr(a,'residue',None)
+        if r is None: continue
+        mid=next((k for k,v in structures.items() if v is getattr(r,'structure',None)),None)
+        if mid and (getattr(a.element,'name','')=='H' or getattr(a,'is_backbone',False)):
+            chosen.append(a.atomspec)
+    run(session,'select clear')
     if chosen:
-        run(session, 'select ' + chosen[0])
-        for expression in chosen[1:]:
-            run(session, 'select add ' + expression)
-        run(session, 'show sel atoms')
-        run(session, 'style sel stick')
-        run(session, 'color sel byhetero')
-    # Enforce this after all show/style commands and backbone-neighbor expansion.
-    # A visible side chain (or a keep residue) must not reveal unrelated H atoms.
-    for residue in residues:
-        for atom in residue.atoms:
-            if getattr(getattr(atom, 'element', None), 'name', '') == 'H':
-                atom.display = atom in endpoints
-    run(session, 'select clear')
+        run(session,'select '+chosen[0])
+        for x in chosen[1:]: run(session,'select add '+x)
+        run(session,'show sel atoms'); run(session,'style sel stick'); run(session,'color sel byhetero')
+    # Hide non-endpoint hydrogens on displayed residues.
+    for r in residues:
+        for a in r.atoms:
+            if getattr(a.element,'name','')=='H': a.display = a in endpoints
+    run(session,'select clear')
 
+def selected_groups(session,id1,cs1,id2,cs2):
+    wanted={(id1,a,id2,b) for a in cs1 for b in cs2}
+    # Also accept reverse orientation so show is symmetric.
+    reverse={(id2,b,id1,a) for a in cs1 for b in cs2}
+    groups=[]
+    for m in all_models(session):
+        d=group_details(m)
+        if d and d[:4] in wanted|reverse: groups.append((m,d))
+    return groups
 
-def show_interactions(session, arguments):
+def show_interactions(session,arguments):
     try:
-        source_spec, pairs, keeps, dist, hide_others = parse(arguments)
-        all_models = list(models(session))
-        source = next((m for m in all_models if spec(m) == source_spec and hasattr(m, 'atoms')), None)
-        if source is None:
-            raise ValueError('Could not locate coordinate model ' + source_spec)
-        groups = [(m, d) for m in all_models if (d := details(m, source)) is not None]
-        if not groups:
-            raise ValueError('No interaction groups found for ' + source_spec)
-        chosen = [(m, d) for m, d in groups if not pairs or frozenset(d[1:]) in pairs]
-        if not chosen:
-            raise ValueError('No interaction groups match those chain pairs.')
-        old_labels = {id(m): [(child, child.display) for child in label_models(m)]
-                      for m, _ in chosen}
-        for group, _ in groups:
-            group.display = False
-            for pb in group.pseudobonds:
-                pb.display = False
-            for child in label_models(group):
-                child.display = False
-        if pairs and not hide_others:
-            selected_chains = sorted(set().union(*pairs))
-            for chain in selected_chains:
-                run(session, f'hide {source_spec}/{chain} atoms')
+        id1,cs1,id2,cs2,keeps,dist,hide_others=parse(arguments)
+        s1=find_structure(session,id1); s2=find_structure(session,id2)
+        if s1 is None: raise ValueError('Could not locate coordinate model #'+id1)
+        if s2 is None: raise ValueError('Could not locate coordinate model #'+id2)
+        structures={id1:s1,id2:s2}; allowed={(id1,c) for c in cs1}|{(id2,c) for c in cs2}
+        allm=all_models(session); chosen=selected_groups(session,id1,cs1,id2,cs2)
+        if not chosen: raise ValueError('No interaction groups match those model/chain endpoints.')
+        # Hide all groups belonging to this endpoint-model pair, then reveal requested pairs.
+        relevant=[]
+        for m in allm:
+            d=group_details(m)
+            if d and ({d[0],d[2]}=={id1,id2}): relevant.append((m,d))
+        old_labels={id(g):[(c,c.display) for c in label_models(g)] for g,_ in chosen}
+        for g,_ in relevant:
+            g.display=False
+            for pb in g.pseudobonds: pb.display=False
+            for c in label_models(g): c.display=False
+        if hide_others:
+            run(session,f'hide #{id1} atoms'); run(session,f'hide #{id2} atoms')
         else:
-            run(session, f'hide {source_spec} atoms')
-        residues, endpoints, count = set(), set(), 0
-        for group, (kind, first, second) in chosen:
-            gid = tuple(group.id)
-            for parent in all_models:
-                pid = tuple(getattr(parent, 'id', ()))
-                if pid and len(pid) < len(gid) and gid[:len(pid)] == pid:
-                    parent.display = True
-            group.display = True
-            for pb in group.pseudobonds:
-                for atom in pb.atoms:
-                    r = protein_residue(atom, source, {first, second})
-                    if r is not None:
-                        residues.add(r)
-                    endpoints.add(atom)
-                    atom.display = True
-                    if hasattr(atom, 'hide'):
-                        atom.hide = 0
-                    marker = getattr(atom, 'structure', None)
-                    if marker is not None and marker is not source:
-                        marker.display = True
-                        if kind == 'pi':
-                            atom.radius = 0.001
-                try:
-                    pb.shown_when_atoms_hidden = True
-                except (AttributeError, TypeError):
-                    pass
-                pb.display = True
-                count += 1
-            for child, previous in old_labels[id(group)]:
-                child.display = previous if dist is None else dist
-        for chain, numbers in keeps:
-            residues.update(r for r in source.residues if r.chain_id == chain and r.number in numbers)
-        available_chains = {r.chain_id for r in source.residues}
-        if pairs:
-            shown_chains = set().union(*pairs) & available_chains
-            for chain in sorted(available_chains if hide_others else shown_chains):
-                action = 'show' if chain in shown_chains else 'hide'
-                run(session, f'{action} {source_spec}/{chain} cartoons')
-        else:
-            shown_chains = {chain for group, (_, *chains) in chosen
-                            if group.pseudobonds for chain in chains}
-            shown_chains.update(r.chain_id for r in residues)
-            for chain in sorted(shown_chains & available_chains):
-                run(session, f'show {source_spec}/{chain} cartoons')
-        show_protein(session, source, residues, endpoints)
-        session.logger.info(f'[show_interactions] {source_spec}: {count} interaction pseudobonds and {len(residues)} unique residues')
-    except ValueError as error:
-        session.logger.error(f'[show_interactions] Error: {error}')
+            for c in cs1: run(session,f'hide #{id1}/{c} atoms')
+            for c in cs2: run(session,f'hide #{id2}/{c} atoms')
+        residues=set(); endpoints=set(); count=0
+        for g,(m1,c1,m2,c2,kind) in chosen:
+            gid=tuple(g.id)
+            for parent in allm:
+                pid=tuple(getattr(parent,'id',()))
+                if pid and len(pid)<len(gid) and gid[:len(pid)]==pid: parent.display=True
+            g.display=True
+            pair_allowed={(m1,c1),(m2,c2)}
+            for pb in g.pseudobonds:
+                for a in pb.atoms:
+                    r=residue_for_atom(a,structures,pair_allowed)
+                    if r is not None: residues.add(r)
+                    endpoints.add(a); a.display=True
+                    try: a.hide=0
+                    except Exception: pass
+                    marker=getattr(a,'structure',None)
+                    if marker is not None and marker not in structures.values():
+                        marker.display=True
+                        if kind=='pi': a.radius=0.001
+                try: pb.shown_when_atoms_hidden=True
+                except Exception: pass
+                pb.display=True; count+=1
+            for child,previous in old_labels[id(g)]: child.display=previous if dist is None else dist
+        for mid,ch,nums in keeps:
+            model=structures.get(mid) or find_structure(session,mid)
+            if model is None: raise ValueError('Could not locate keep model #'+mid)
+            structures[mid]=model
+            residues.update(r for r in model.residues if r.chain_id==ch and r.number in nums)
+        # Cartoon visibility on each endpoint model.
+        for mid,model,selected in ((id1,s1,set(cs1)),(id2,s2,set(cs2))):
+            available={r.chain_id for r in model.residues}
+            if hide_others:
+                for ch in sorted(available): run(session,f'{"show" if ch in selected else "hide"} #{mid}/{ch} cartoons')
+            else:
+                for ch in sorted(selected & available): run(session,f'show #{mid}/{ch} cartoons')
+        show_residues(session,structures,residues,endpoints)
+        session.logger.info(f'[show_interactions] #{id1}/{"-".join(cs1)} <-> #{id2}/{"-".join(cs2)}: {count} interaction pseudobonds and {len(residues)} unique residues')
+    except ValueError as e:
+        session.logger.error('[show_interactions] Error: '+str(e))
 
-
-def hide_interactions(session, arguments):
+def hide_interactions(session,arguments):
     try:
-        source_spec, pairs, _, _, _ = parse(arguments)
-        all_models = list(models(session))
-        source = next((m for m in all_models if spec(m) == source_spec and hasattr(m, 'atoms')), None)
-        if source is None:
-            raise ValueError('Could not locate coordinate model ' + source_spec)
-        hidden = 0
-        for group in all_models:
-            d = details(group, source)
-            if d is None or (pairs and frozenset(d[1:]) not in pairs):
-                continue
-            group.display = False
-            for pb in group.pseudobonds:
-                pb.display = False
-                hidden += 1
-            for child in label_models(group):
-                child.display = False
-        run(session, f'hide {source_spec} atoms')
-        session.logger.info(f'[hide_interactions] {source_spec}: hid {hidden} interaction pseudobonds')
-    except ValueError as error:
-        session.logger.error(f'[hide_interactions] Error: {error}')
+        id1,cs1,id2,cs2,_,_,_=parse(arguments)
+        chosen=selected_groups(session,id1,cs1,id2,cs2)
+        if not chosen: raise ValueError('No interaction groups match those model/chain endpoints.')
+        hidden=0
+        for g,_ in chosen:
+            g.display=False
+            for pb in g.pseudobonds: pb.display=False; hidden+=1
+            for c in label_models(g): c.display=False
+        for c in cs1: run(session,f'hide #{id1}/{c} atoms')
+        for c in cs2: run(session,f'hide #{id2}/{c} atoms')
+        session.logger.info(f'[hide_interactions] hid {hidden} interaction pseudobonds')
+    except ValueError as e:
+        session.logger.error('[hide_interactions] Error: '+str(e))
 
-
-register('show_interactions', CmdDesc(required=[('arguments', RestOfLine)],
-         synopsis='Show existing interaction groups and protein residues'),
-         show_interactions, logger=session.logger)
-register('hide_interactions', CmdDesc(required=[('arguments', RestOfLine)],
-         synopsis='Hide existing interaction groups and protein atoms'),
-         hide_interactions, logger=session.logger)
-print('[show_interactions] Commands initialized: show_interactions, hide_interactions')
+register('show_interactions',CmdDesc(required=[('arguments',RestOfLine)],synopsis='Show existing multi-model interaction groups and protein residues'),show_interactions,logger=session.logger)
+register('hide_interactions',CmdDesc(required=[('arguments',RestOfLine)],synopsis='Hide existing multi-model interaction groups and protein atoms'),hide_interactions,logger=session.logger)
+print('[show_interactions] Multi-model commands initialized: show_interactions, hide_interactions')
