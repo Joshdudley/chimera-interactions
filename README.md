@@ -6,36 +6,28 @@ These scripts run **inside UCSF ChimeraX**. They are visualization and screening
 
 ## Scripts
 
-| Script | ChimeraX command | Detection rule |
-| --- | --- | --- |
-| [`add_hydrophobic.py`](add_hydrophobic.py) | `add_hydrophobic` | Closest non-carbonyl carbon pair within 4.5 Å, with both residues drawn from ALA, VAL, LEU, ILE, MET, PRO, PHE, TRP, or TYR; one contact per residue pair. |
-| [`add_hbond.py`](add_hbond.py) | `add_hbond` | Donor–acceptor heavy-atom distance at most 3.5 Å; closest contact per residue pair. Uses an attached hydrogen for the displayed endpoint when available. |
-| [`add_salt_bridge.py`](add_salt_bridge.py) | `add_salt_bridge` | ASP/GLU side-chain oxygens near LYS/ARG side-chain nitrogens, within 4.0 Å; closest contact per residue pair. |
-| [`add_polar.py`](add_polar.py) | `add_polar` | Closest eligible O/N/S contact within 4.0 Å. Includes standard amino-acid backbone N/O and selected side chains; excludes residue pairs qualifying as hydrogen bonds and conventional salt-bridge atom pairs. |
-| [`add_pi.py`](add_pi.py) | `add_pi` | Aromatic ring–ring, cation–π, and sulfur–π candidates. Uses a 6.5 Å ring-centroid cutoff or a 5.5 Å nearest-ring-atom criterion for ring–ring contacts, and a 5.5 Å cutoff for aromatic partners. |
-| [`add_bad_hydrophobic.py`](add_bad_hydrophobic.py) | `add_bad_hydrophobic` | Non-carbonyl carbon of a hydrophobic residue near an O/N atom across the interface, within 3.5 Å; closest contact per residue pair. A proximity flag, not proof that the contact is energetically unfavorable. |
-| [`show_interactions.py`](show_interactions.py) | `show_interactions`, `hide_interactions` | Displays existing interaction lines and contacting sidechains; can filter chain pairs, retain extra residues, control distance labels and hide other chains. |
-| [`export_interactions.py`](export_interactions.py) | `export_interactions` | Exports the existing interaction groups to CSV, including groups with zero contacts. |
-| [`compare_interactions.py`](compare_interactions.py) | Terminal command | Compares the ChimeraX CSV with PDBe Arpeggio JSON by chain and residue pair. |
+The current interface uses two scripts:
 
-The categories are based on the scripts' specific atom lists and distance rules. The carbon filters above include backbone `CA` because they exclude only the carbonyl carbon `C`. Hydrogen bonds use a heavy-atom distance proxy rather than an angle criterion. The π detector does not require ring-plane orientation. Polar contacts are suppressed for a residue pair when it meets the hydrogen-bond rules, preventing a second polar line over that pair's hydrogen-bond line.
+| Script | ChimeraX commands | Purpose |
+| --- | --- | --- |
+| [`add_interactions.py`](add_interactions.py) | `add_hydrophobic`, `add_hbond`, `add_salt_bridge`, `add_polar`, `add_pi`, `add_bad_hydrophobic` | Registers all six interaction detectors. Each detector accepts independent coordinate-model/chain endpoints and chain ranges. |
+| [`show_interactions.py`](show_interactions.py) | `show_interactions`, `hide_interactions` | Displays or hides existing interaction groups and contacting residues across the selected model/chain endpoints. |
+
+The older standalone detector files (`add_hydrophobic.py`, `add_hbond.py`, `add_salt_bridge.py`, `add_polar.py`, `add_pi.py`, and `add_bad_hydrophobic.py`) are **deprecated**. They may remain in the repository for reference or backwards compatibility, but new sessions should load `add_interactions.py` instead. Do not load the standalone detector scripts together with `add_interactions.py`, since they register the same ChimeraX command names.
+
+The interaction categories retain their detector-specific chemistry and distance rules: hydrophobic contacts use the closest qualifying non-carbonyl carbon pair within 4.5 A; hydrogen bonds use a donor-acceptor heavy-atom distance of at most 3.5 A and display an attached hydrogen when available; salt bridges use ASP/GLU side-chain oxygens versus LYS/ARG side-chain nitrogens within 4.0 A; polar contacts use eligible O/N/S contacts within 4.0 A while excluding hydrogen-bond and conventional salt-bridge residue pairs; pi interactions include aromatic ring-ring, cation-pi, and sulfur-pi candidates; and bad-hydrophobic contacts flag hydrophobic-carbon versus O/N proximity within 3.5 A. These are screening/visualization rules rather than binding-energy calculations.
 
 ## Load the commands
 
-1. Download this repository and open your protein structure in ChimeraX.
-2. In the ChimeraX command line, run each script you want to use. For example, if the files are in `/path/to/chimera-interactions`:
+1. Download this repository and open your protein structure(s) in ChimeraX.
+2. Load the consolidated interaction detector and the display helper:
 
    ```chimerax
-   runscript /path/to/chimera-interactions/add_hydrophobic.py
-   runscript /path/to/chimera-interactions/add_hbond.py
-   runscript /path/to/chimera-interactions/add_salt_bridge.py
-   runscript /path/to/chimera-interactions/add_polar.py
-   runscript /path/to/chimera-interactions/add_pi.py
-   runscript /path/to/chimera-interactions/add_bad_hydrophobic.py
+   runscript /path/to/chimera-interactions/add_interactions.py
    runscript /path/to/chimera-interactions/show_interactions.py
    ```
 
-`runscript` registers each command in the current ChimeraX session. Loading a newer version of a script again can produce ChimeraX's informational “replacing existing command” message.
+`add_interactions.py` registers all six `add_*` detector commands. `show_interactions.py` registers `show_interactions` and `hide_interactions`. `runscript` registers the commands for the current ChimeraX session; load these scripts again after starting a new session. Loading a newer version over an already registered command can produce ChimeraX's informational “replacing existing command” message.
 
 ## Run an analysis
 
