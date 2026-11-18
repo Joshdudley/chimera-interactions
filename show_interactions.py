@@ -202,8 +202,13 @@ def show_interactions(session,arguments):
             if model is None: raise ValueError('Could not locate keep model #'+mid)
             structures[mid]=model
             residues.update(r for r in model.residues if r.chain_id==ch and r.number in nums)
-        # Cartoon visibility on each endpoint model.
+        # Merge endpoint chains before setting visibility. When both endpoints
+        # use one coordinate model, neither pass may hide the other's chains.
+        cartoon_models={}
         for mid,model,selected in ((id1,s1,set(cs1)),(id2,s2,set(cs2))):
+            if mid not in cartoon_models: cartoon_models[mid]=(model,set())
+            cartoon_models[mid][1].update(selected)
+        for mid,(model,selected) in cartoon_models.items():
             available={r.chain_id for r in model.residues}
             if hide_others:
                 for ch in sorted(available): run(session,f'{"show" if ch in selected else "hide"} #{mid}/{ch} cartoons')

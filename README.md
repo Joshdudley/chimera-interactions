@@ -34,7 +34,7 @@ The interaction categories retain their detector-specific chemistry and distance
 All six commands use the same argument order:
 
 ```text
-COMMAND #MODEL1/CHAIN_OR_RANGE #MODEL2/CHAIN_OR_RANGE printFile yes|no #PARENT_MODEL [showLabels yes|no]
+COMMAND #MODEL1/CHAIN_OR_RANGE #MODEL2/CHAIN_OR_RANGE printFile yes|no #PARENT_MODEL [showLabels yes|no] [dash_color COLOR]
 ```
 
 For example, compare chain `A` in model `#21.1` with chains `B` through `E` in model `#21.3`:
@@ -53,6 +53,50 @@ Ranges are accepted on either endpoint. For example, `#21.1/A-C` versus `#21.3/D
 For example, `add_pi #21.1/A #21.3/B-E ... #21.5.5` creates one child subgroup for each requested chain pair under `#21.5.5`. Rerunning any `add_*` command at its existing parent ID closes and rebuilds that interaction family, clears retained pseudobonds, and reuses the ID. For `add_pi`, old centroid markers associated with that interaction family are removed too. If the destination ID belongs to another model, the command stops without replacing it. Run `add_hbond` before `add_polar` when rebuilding both families so polar contacts can exclude residue pairs already drawn as hydrogen bonds.
 
 `showLabels no` keeps distance labels hidden initially; omitting it defaults to `yes`. The scripts create distance-label models even when the labels are hidden, so they can be shown later. Generated chain-pair groups start hidden so you can reveal the contacts you want to inspect in ChimeraX. Zero-contact chain pairs still get an empty subgroup. Empty groups and existing groups now use ChimeraX's session pseudobond manager, so their parent structures can be closed and the analysis run again without the pseudobond-manager deletion error.
+
+## Set interaction dash colors
+
+All six `add_*` commands accept the optional `dash_color` keyword. It changes the dashed interaction lines created by that call across all requested chain-pair subgroups. Existing calls still work and keep their original colors when the option is omitted.
+
+For your model and destination IDs:
+
+```chimerax
+add_hydrophobic #9.2/A #9.2/B printFile no #9.4.1 showLabels no dash_color grey
+add_hbond #9.2/A #9.2/B printFile no #9.4.2 showLabels no dash_color grey
+add_salt_bridge #9.2/A #9.2/B printFile no #9.4.3 showLabels no dash_color grey
+add_polar #9.2/A #9.2/B printFile no #9.4.4 showLabels no dash_color grey
+add_pi #9.2/A #9.2/B printFile no #9.4.5 showLabels no dash_color grey
+add_bad_hydrophobic #9.2/A #9.2/B printFile no #9.4.6 showLabels no dash_color grey
+```
+
+Each call can use a different ChimeraX color name or hexadecimal color. For example:
+
+```chimerax
+add_hbond #9.2/A #9.2/B printFile no #9.4.2 showLabels no dash_color lightcoral
+add_salt_bridge #9.2/A #9.2/B printFile no #9.4.3 showLabels no dash_color #F08080
+add_polar #9.2/A #9.2/B printFile no #9.4.4 showLabels no dash_color #80808080
+```
+
+Hex colors may include alpha as `#RRGGBBAA`; the last example is gray with approximately 50% opacity. `dashColor` is also accepted by ChimeraX's keyword parser. Invalid colors are rejected before the interaction-family parent is rebuilt.
+
+| Command | Default dash color when omitted |
+| --- | --- |
+| `add_hydrophobic` | `black` |
+| `add_hbond` | `pink` |
+| `add_salt_bridge` | `orange` |
+| `add_polar` | `purple` |
+| `add_pi` | `tan` |
+| `add_bad_hydrophobic` | `grey` |
+
+The option controls interaction lines; it does not recolor protein atoms, cartoons, pi centroid markers, or explicitly recolor distance labels. Detection criteria, distances, label visibility and summary output are unchanged. Rerunning a detector at its existing destination ID rebuilds that family using the requested color, following the existing replacement behavior.
+
+Reload the updated detector in your current session before using the new keyword:
+
+```chimerax
+runscript /path/to/chimera-interactions/add_interactions.py
+```
+
+Your existing `show_interactions.py` needs no changes. It reveals the already-colored interaction pseudobonds without assigning a new dash color. Use the existing `show_interactions` command after generating the groups to reveal them; new groups still start hidden as before.
 
 ## Display interactions
 
@@ -78,6 +122,8 @@ show_interactions #21.1/A #21.3/B keep #21.1/A:44,70 #21.3/B:183 display_Dist fa
 ```
 
 For filtered calls, `hide_other_chains true` is the default; use `hide_other_chains false` if you want unrelated chains to retain their current display state. `hide_interactions` hides matching existing interaction lines and their displayed interaction atoms; it does not delete the interaction groups.
+
+When both endpoints refer to the same coordinate model, `show_interactions` combines their requested chains before setting cartoon visibility. For example, `show_interactions #9.2/A #9.2/B display_Dist false` keeps **both A and B cartoons visible**. With the default `hide_other_chains true`, other chains in that model are hidden. With `hide_other_chains false`, unrelated chains keep their current cartoon display state. Reload the updated `show_interactions.py` with `runscript` to apply this fix in an existing session.
 
 To rerun a scripted scene with fixed model numbers, start with `close all` **before opening its structures**. This clears the previous run's models, so newly opened structures receive the intended numbers. If ChimeraX has assigned a built-in `missing structure` submodel to an ID reserved for an interaction family, choose an unused interaction-family ID or close that specific submodel after opening the structure and before calling the corresponding `add_*` command. Closing it removes the missing-segment pseudobond display, not the protein atoms.
 

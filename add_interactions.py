@@ -1,12 +1,12 @@
 # ChimeraX multi-model interface interaction commands.
 # Examples:
-#   add_hydrophobic #21.1/A #21.3/B-F printFile no #25.1.1 showLabels no
+#   add_hydrophobic #21.1/A #21.3/B-F printFile no #25.1.1 showLabels no dash_color grey
 #   add_hbond       #21.1/A #21.3/B   printFile no #25.1.2 showLabels no
 # Both endpoints may use hierarchical model IDs and a single chain or letter range.
 # Example: add_hydrophobic #21.1/A-C #21.3/D-F printFile no #25.1.1 showLabels no
 
 import os, re, numpy as np
-from chimerax.core.commands import run, register, CmdDesc, StringArg
+from chimerax.core.commands import run, register, CmdDesc, StringArg, ColorArg
 from chimerax.core.models import Model
 
 HYDRO={"ALA","VAL","LEU","ILE","MET","PRO","PHE","TRP","TYR"}
@@ -148,12 +148,20 @@ def _detect(kind,m1,c1,m2,c2):
 
 COLORS={'hydrophobic':'black','bad_hydrophobic':'grey','hbond':'pink','salt_bridge':'orange','polar':'purple'}
 
+def _dash_color(value, default):
+    # ColorArg validates named/hex colors before the detector modifies models.
+    # Normalize to one RGBA token when embedding it in the pbond command.
+    # An omitted override preserves the original detector-specific color.
+    if value is None: return default
+    return '#' + ''.join(f'{int(c):02x}' for c in value.uint8x4())
+
 def _command(kind):
-    def f(session, endpoint1, endpoint2, print_file_keyword, print_file_value, interaction_model_id, showLabels='yes'):
+    def f(session, endpoint1, endpoint2, print_file_keyword, print_file_value, interaction_model_id, showLabels='yes', dash_color=None):
         try:
             m1,id1,cs1=_endpoint(session,endpoint1); m2,id2,cs2=_endpoint(session,endpoint2)
             if str(print_file_keyword).lower() not in ('printfile','print_file','printf_file'): raise ValueError('Expected printFile yes|no')
             write=_bool(print_file_value); show=_bool(showLabels)
+            color=_dash_color(dash_color, COLORS[kind])
             _parent(session,str(interaction_model_id),f'Model_{id1.replace(".","_")}_{kind}')
             total=0; lines=[]; pair_count=0
             for c1 in cs1:
@@ -161,7 +169,7 @@ def _command(kind):
                     pair_count += 1
                     pairs=_detect(kind,m1,c1,m2,c2); total+=len(pairs)
                     name=f'Model_{id1.replace(".","_")}_{c1}_to_{id2.replace(".","_")}_{c2}_{kind}'
-                    _make_group(session,str(interaction_model_id),pair_count,name,pairs,COLORS[kind],show)
+                    _make_group(session,str(interaction_model_id),pair_count,name,pairs,color,show)
                     lines += [f'{_spec(a)} <-> {_spec(b)}' for a,b in pairs]
                     session.logger.info(f'[{"add_"+kind}] #{id1}/{c1} to #{id2}/{c2}: {len(pairs)} contacts')
             if write:
@@ -172,11 +180,12 @@ def _command(kind):
     return f
 
 # Pi uses centroid markers and is implemented separately because one endpoint can be a ring centroid.
-def add_pi(session, endpoint1, endpoint2, print_file_keyword, print_file_value, interaction_model_id, showLabels='yes'):
+def add_pi(session, endpoint1, endpoint2, print_file_keyword, print_file_value, interaction_model_id, showLabels='yes', dash_color=None):
     try:
         from chimerax.markers import MarkerSet
         m1,id1,cs1=_endpoint(session,endpoint1); m2,id2,cs2=_endpoint(session,endpoint2)
         write=_bool(print_file_value); show=_bool(showLabels)
+        color=_dash_color(dash_color, 'tan')
         _parent(session,str(interaction_model_id),f'Model_{id1.replace(".","_")}_pi')
         out=[]; pair_count=0
         for c1 in cs1:
@@ -206,16 +215,16 @@ def add_pi(session, endpoint1, endpoint2, print_file_keyword, print_file_value, 
                             a=min(aa,key=lambda x:np.linalg.norm(cB-_scene(x)))
                             if np.linalg.norm(cB-_scene(a))<=5.5: pairs.append((a,marker(cB)))
             name=f'Model_{id1.replace(".","_")}_{c1}_to_{id2.replace(".","_")}_{c2}_pi'
-            _make_group(session,str(interaction_model_id),pair_count,name,pairs,'tan',show)
+            _make_group(session,str(interaction_model_id),pair_count,name,pairs,color,show)
             session.logger.info(f'[add_pi] #{id1}/{c1} to #{id2}/{c2}: {len(pairs)} contacts')
         if write: open('pi.txt','w').write('\n'.join(out)+'\n')
     except Exception as e: session.logger.error(f'[add_pi] Error: {e}')
 
 for kind in ('hydrophobic','bad_hydrophobic','hbond','salt_bridge','polar'):
     fn=_command(kind)
-    desc=CmdDesc(required=[('endpoint1',StringArg),('endpoint2',StringArg),('print_file_keyword',StringArg),('print_file_value',StringArg),('interaction_model_id',StringArg)],keyword=[('showLabels',StringArg)],synopsis=f'Generate {kind} contacts across model/chain endpoints')
+    desc=CmdDesc(required=[('endpoint1',StringArg),('endpoint2',StringArg),('print_file_keyword',StringArg),('print_file_value',StringArg),('interaction_model_id',StringArg)],keyword=[('showLabels',StringArg),('dash_color',ColorArg)],synopsis=f'Generate {kind} contacts across model/chain endpoints')
     register('add_'+kind,desc,fn,logger=session.logger)
 
-pi_desc=CmdDesc(required=[('endpoint1',StringArg),('endpoint2',StringArg),('print_file_keyword',StringArg),('print_file_value',StringArg),('interaction_model_id',StringArg)],keyword=[('showLabels',StringArg)],synopsis='Generate pi contacts across model/chain endpoints')
+pi_desc=CmdDesc(required=[('endpoint1',StringArg),('endpoint2',StringArg),('print_file_keyword',StringArg),('print_file_value',StringArg),('interaction_model_id',StringArg)],keyword=[('showLabels',StringArg),('dash_color',ColorArg)],synopsis='Generate pi contacts across model/chain endpoints')
 register('add_pi',pi_desc,add_pi,logger=session.logger)
 print('Registered multi-model add_hydrophobic, add_bad_hydrophobic, add_hbond, add_salt_bridge, add_polar, add_pi')
